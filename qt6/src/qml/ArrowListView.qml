@@ -15,15 +15,35 @@ FocusScope {
     property int itemHeight:  DS.Style.arrowListView.itemHeight
     property alias view: itemsView
 
-    // Full height of the list, to size a popup before it is mapped.
+    // Height of a visible realized row, or the style height before one exists:
+    // row 0 can be a row hidden by a visible role, and its height is 0.
+    readonly property real rowHeight: {
+        if (itemsView.contentHeight > 0) {
+            for (var i = 0; i < itemsView.count; ++i) {
+                const item = itemsView.itemAtIndex(i)
+                if (item && item.visible && item.height > 0)
+                    return item.height
+            }
+        }
+        return itemHeight
+    }
+
+    // Temporary diagnostics for popup height changes while dragging.
+    onRowHeightChanged: console.warn("[PopupHeight] row", control,
+                                    "rowHeight=", rowHeight, "count=", itemsView.count,
+                                    "contentHeight=", itemsView.contentHeight,
+                                    "viewHeight=", itemsView.height, "contentY=", itemsView.contentY,
+                                    "dragging=", itemsView.dragging, "moving=", itemsView.moving)
+
+    // Full height of the list, to size a popup before it is mapped
     readonly property real sizedHeight: {
         if (itemsView.count === 0)
             return 0
-        const item = itemsView.itemAtIndex(0)
-        const measured = itemsView.contentHeight > 0 && item ? (item.height || item.implicitHeight) : 0
+        if (itemsView.contentHeight > 0)
+            return implicitHeight
         const arrowStrips = itemsView.count > maxVisibleItems
                 ? 2 * (DS.Style.arrowListView.stepButtonIconSize.height + contentLayout.spacing) : 0
-        return Math.min(itemsView.count, maxVisibleItems) * (measured > 0 ? measured : itemHeight) + arrowStrips
+        return Math.min(itemsView.count, maxVisibleItems) * rowHeight + arrowStrips
     }
 
     implicitWidth: Math.max(DS.Style.arrowListView.width, contentLayout.implicitWidth)
@@ -44,21 +64,14 @@ FocusScope {
 
         ListView {
             id: itemsView
+            property real itemMaxWidth: 0
             clip: true
             Layout.fillWidth: true
             Layout.fillHeight: true
             onHeightChanged: if (height > 0 && contentHeight === 0) forceLayout()
-            implicitHeight: itemsView.count > 0 ? Math.min(contentHeight, maxVisibleItems * contentHeight / itemsView.count) : 0
-            implicitWidth:{
-                var maxWidth = DS.Style.arrowListView.width
-                for (var i = 0; i < itemsView.count; ++i) {
-                    var item = itemsView.itemAtIndex(i)
-                    if (item && item.implicitWidth > maxWidth)
-                        maxWidth = item.implicitWidth
-                }
-                return maxWidth
-            }
-            interactive: itemsView.count > maxVisibleItems
+            implicitHeight: itemsView.count > 0 ? Math.min(contentHeight, maxVisibleItems * control.rowHeight) : 0
+            implicitWidth: itemMaxWidth
+            interactive: itemsView.contentHeight > itemsView.height
             ScrollIndicator.vertical: ScrollIndicator { }
             highlight: HighlightPanel {
                 visible: false // TODO listview's highlight is confict with Item's highlight.
@@ -76,15 +89,26 @@ FocusScope {
             highlightMoveDuration: -1
             highlightMoveVelocity: 400
 
-            onCountChanged: refreshContentItemWidth()
+            Connections {
+                target: itemsView.contentItem
+                function onChildrenChanged() { Qt.callLater(itemsView.refreshContentItemWidth) }
+            }
+
+            onCountChanged: {
+                itemMaxWidth = 0
+                refreshContentItemWidth()
+            }
+
             onWidthChanged: refreshContentItemWidth()
 
             function refreshContentItemWidth() {
                 for (var i = 0; i < itemsView.count; ++i) {
                     var item = itemsView.itemAtIndex(i)
-                    if (item) {
-                        item.width = itemsView.width
-                    }
+                    if (!item || !item.visible)
+                        continue
+                    item.width = itemsView.width
+                    if (item.implicitWidth > itemMaxWidth)
+                        itemMaxWidth = item.implicitWidth
                 }
             }
         }
